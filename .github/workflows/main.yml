@@ -16,8 +16,10 @@ jobs:
           ZIP=$(find . -maxdepth 2 -iname "*UnityAds*STARTER*.zip" | head -n 1)
           if [ -z "$ZIP" ]; then
             echo "Starter ZIP not found"
+            find . -maxdepth 3 -type f
             exit 1
           fi
+          mkdir extracted
           unzip -q "$ZIP" -d extracted
 
       - name: Set up Java
@@ -28,11 +30,18 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 12266719
 
       - name: Install Android SDK packages
         run: |
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           yes | sdkmanager --licenses
+
+      - name: Locate Android project
+        run: |
+          find extracted -name gradlew -type f
+          test -f extracted/pwandroid/gradlew
 
       - name: Build APK
         run: |
