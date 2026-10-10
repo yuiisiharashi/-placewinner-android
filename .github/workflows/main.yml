@@ -1,1 +1,68 @@
 
+name: Build PlaceWinner APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract merged Android ZIP
+        shell: bash
+        run: |
+          set -e
+          ZIP="$(find . -maxdepth 2 -type f -name 'PlaceWinner-Original-UnityAds-Merged.zip' | head -n 1)"
+          if [ -z "$ZIP" ]; then
+            echo "ZIP gabungan tidak ditemukan."
+            find . -maxdepth 2 -type f
+            exit 1
+          fi
+          mkdir extracted
+          unzip -q "$ZIP" -d extracted
+          GRADLE_FILE="$(find extracted -type f -path '*/app/build.gradle' | head -n 1)"
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "File app/build.gradle tidak ditemukan dalam ZIP."
+            find extracted -maxdepth 5 -type f
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$(dirname "$GRADLE_FILE")")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyek ditemukan: $PROJECT_DIR"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlaceWinner-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          
