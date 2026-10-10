@@ -1,0 +1,43 @@
+
+name: Build PlaceWinner APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+
+      - name: Find and extract starter ZIP
+        run: |
+          ZIP=$(find . -maxdepth 1 -iname '*UnityAds*STARTER*.zip' | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "Starter ZIP not found"
+            exit 1
+          fi
+          unzip -q "$ZIP" -d extracted
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build APK
+        run: |
+          cd extracted/pwandroid
+          gradle --version || true
+          gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlaceWinner-debug-apk
+          path: extracted/pwandroid/app/build/outputs/apk/debug/app-debug.apk
+          
