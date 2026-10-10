@@ -1,7 +1,11 @@
+
 name: Build PlaceWinner APK
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -12,15 +16,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Find and extract starter ZIP
+        shell: bash
         run: |
-          ZIP=$(find . -maxdepth 2 -iname "*UnityAds*STARTER*.zip" | head -n 1)
+          set -e
+          ZIP=$(find . -maxdepth 2 -type f -iname "*UnityAds*STARTER*.zip" | head -n 1)
+
           if [ -z "$ZIP" ]; then
-            echo "Starter ZIP not found"
+            echo "Starter ZIP tidak ditemukan."
             exit 1
           fi
-          mkdir extracted
+
+          mkdir -p extracted
           unzip -q "$ZIP" -d extracted
-          test -f extracted/pwandroid/gradlew
+
+          if [ ! -f extracted/pwandroid/gradlew ]; then
+            echo "File gradlew tidak ditemukan di extracted/pwandroid."
+            exit 1
+          fi
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -28,26 +40,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
-          fi
-          test -n "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          set -e
+          yes | sdkmanager --licenses || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Build APK
+        shell: bash
         run: |
+          set -e
           cd extracted/pwandroid
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PlaceWinner-debug-apk
           path: extracted/pwandroid/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          
