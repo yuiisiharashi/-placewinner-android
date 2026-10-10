@@ -19,18 +19,20 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP=$(find . -maxdepth 2 -type f -iname "*UnityAds*STARTER*.zip" | head -n 1)
+          ZIP=$(find . -maxdepth 2 -type f -iname '*UnityAds*STARTER*.zip' | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "Starter ZIP tidak ditemukan."
+            echo "ERROR: PlaceWinner starter ZIP tidak ditemukan."
+            find . -maxdepth 3 -type f
             exit 1
           fi
 
           mkdir -p extracted
           unzip -q "$ZIP" -d extracted
 
-          if [ ! -f extracted/pwandroid/gradlew ]; then
-            echo "File gradlew tidak ditemukan di extracted/pwandroid."
+          if [ ! -f extracted/pwandroid/build.gradle ] || [ ! -f extracted/pwandroid/app/build.gradle ]; then
+            echo "ERROR: File Gradle proyek tidak ditemukan."
+            find extracted -maxdepth 4 -type f
             exit 1
           fi
 
@@ -40,6 +42,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -47,8 +54,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          yes | sdkmanager --licenses || true
-          sdkmanager \
+          sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+          sdkmanager --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -58,8 +65,7 @@ jobs:
         run: |
           set -e
           cd extracted/pwandroid
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -67,4 +73,3 @@ jobs:
           name: PlaceWinner-debug-apk
           path: extracted/pwandroid/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
