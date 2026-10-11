@@ -1,4 +1,3 @@
-
 name: Build PlaceWinner Unity Ads APK
 
 on:
@@ -10,9 +9,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -21,22 +19,43 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -e
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "Android SDK tidak ditemukan di runner."
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager tidak ditemukan."
+            find "$SDK" -maxdepth 4 -type f -name sdkmanager
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
-      - name: Extract Android project
+      - name: Extract project ZIP
         shell: bash
         run: |
           set -e
           ZIP=$(find . -maxdepth 1 -type f \
             -iname '*UnityAds*Android*.zip' | head -n 1)
           if [ -z "$ZIP" ]; then
-            echo "ZIP proyek Unity Ads tidak ditemukan."
+            echo "ZIP Unity Ads Android tidak ditemukan di root."
             ls -la
             exit 1
           fi
@@ -45,14 +64,16 @@ jobs:
           SETTINGS=$(find extracted -type f \
             -name settings.gradle | head -n 1)
           if [ -z "$SETTINGS" ]; then
-            echo "settings.gradle tidak ditemukan."
+            echo "settings.gradle tidak ditemukan dalam ZIP."
             exit 1
           fi
           echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
+          echo "Proyek ditemukan: $(dirname "$SETTINGS")"
 
-      - name: Fix Java escaping error
+      - name: Fix Java escaping
         shell: bash
         run: |
+          set -e
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -64,18 +85,19 @@ jobs:
 
           p = files[0]
           lines = p.read_text(encoding="utf-8").splitlines()
-          fixed = False
+          matches = [
+              i for i, line in enumerate(lines)
+              if "String safe = message.replace(" in line
+          ]
+          if len(matches) != 1:
+              raise SystemExit(
+                  "Baris String safe tidak ditemukan tepat satu kali; "
+                  "periksa MainActivity.java."
+              )
 
-          for i, line in enumerate(lines):
-              if "String safe = message.replace(" in line:
-                  lines[i] = r'''        String safe = message.replace("\\", "\\\\").replace("'", "\\'");'''
-                  fixed = True
-                  break
-
-          if not fixed:
-              raise SystemExit("Baris notifyAdError tidak ditemukan; periksa kode Java.")
+          lines[matches[0]] = r'''        String safe = message.replace("\\", "\\\\").replace("'", "\\'");'''
           p.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print("Memperbaiki:", p)
+          print("Baris escaping Java diperbaiki.")
           PY
 
       - name: Build debug APK
@@ -83,16 +105,18 @@ jobs:
         run: |
           set -e
           cd "$PROJECT_DIR"
+          gradle --version
           gradle assembleDebug --no-daemon
 
-      - name: Find APK
-        id: apk
+      - name: Verify APK
+        id: verify
         shell: bash
         run: |
+          set -e
           APK=$(find "$PROJECT_DIR" -type f \
             -path '*/build/outputs/apk/debug/*.apk' | head -n 1)
           if [ -z "$APK" ]; then
-            echo "APK tidak ditemukan."
+            echo "Build selesai tetapi APK tidak ditemukan."
             exit 1
           fi
           echo "path=$APK" >> "$GITHUB_OUTPUT"
@@ -102,6 +126,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PlaceWinner-UnityAds-APK
-          path: ${{ steps.apk.outputs.path }}
+          path: ${{ steps.verify.outputs.path }}
           if-no-files-found: error
+          retention-days: 7
           
