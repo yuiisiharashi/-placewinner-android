@@ -3,9 +3,17 @@ name: Build PlaceWinner from fixed source ZIP
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout repository
@@ -18,18 +26,25 @@ jobs:
           ZIP_FILE="PlaceWinner-Firebase-Login-FIX.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: $ZIP_FILE tidak ditemukan di folder utama repo."
+            echo "::error::ZIP source tidak ditemukan di folder utama repo."
             exit 1
           fi
 
           mkdir -p "$RUNNER_TEMP/placewinner-source"
           unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/placewinner-source"
 
-          test -f "$RUNNER_TEMP/placewinner-source/settings.gradle" || \
-          test -f "$RUNNER_TEMP/placewinner-source/settings.gradle.kts"
+          SRC="$RUNNER_TEMP/placewinner-source"
 
-          test -f "$RUNNER_TEMP/placewinner-source/app/build.gradle" || \
-          test -f "$RUNNER_TEMP/placewinner-source/app/build.gradle.kts"
+          if [ ! -f "$SRC/settings.gradle" ] && [ ! -f "$SRC/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle tidak ditemukan di root ZIP."
+            find "$SRC" -maxdepth 3 -type f | head -80
+            exit 1
+          fi
+
+          if [ ! -f "$SRC/app/build.gradle" ] && [ ! -f "$SRC/app/build.gradle.kts" ]; then
+            echo "::error::app/build.gradle tidak ditemukan di root ZIP."
+            exit 1
+          fi
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -37,8 +52,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager tidak ditemukan di $SDKMANAGER"
+            find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null || true
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -46,8 +78,9 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
+        shell: bash
         working-directory: ${{ runner.temp }}/placewinner-source
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
