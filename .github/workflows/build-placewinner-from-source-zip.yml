@@ -1,0 +1,74 @@
+name: Build PlaceWinner and show APK SHA-1
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Locate and extract source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="PlaceWinner-Firebase-Login-FIX.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::File $ZIP_FILE tidak ditemukan di root repository."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/placewinner-source"
+          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/placewinner-source"
+          SRC="$RUNNER_TEMP/placewinner-source"
+          if [ ! -f "$SRC/settings.gradle" ] && [ ! -f "$SRC/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle tidak ditemukan di root ZIP."
+            find "$SRC" -maxdepth 3 -type f | head -80
+            exit 1
+          fi
+          if [ ! -f "$SRC/app/build.gradle" ] && [ ! -f "$SRC/app/build.gradle.kts" ]; then
+            echo "::error::app/build.gradle tidak ditemukan di root ZIP."
+            exit 1
+          fi
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        shell: bash
+        working-directory: ${{ runner.temp }}/placewinner-source
+        run: gradle assembleDebug --stacktrace
+      - name: Print certificate fingerprint of the exact APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/placewinner-source/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner tidak ditemukan."
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-certificate.txt"
+          echo ""
+          echo "=== SHA-1 APK yang dihasilkan (cocokkan dengan Firebase) ==="
+          grep -i 'Signer #1 certificate SHA-1 digest' "$RUNNER_TEMP/apk-certificate.txt" || true
+          echo "=== SHA-256 APK yang dihasilkan ==="
+          grep -i 'Signer #1 certificate SHA-256 digest' "$RUNNER_TEMP/apk-certificate.txt" || true
+          cp "$RUNNER_TEMP/apk-certificate.txt" "$RUNNER_TEMP/placewinner-apk-certificate.txt"
+      - name: Upload APK and certificate report
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlaceWinner-Firebase-Login-FIX-APK
+          path: |
+            ${{ runner.temp }}/placewinner-source/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/placewinner-apk-certificate.txt
+          if-no-files-found: error
