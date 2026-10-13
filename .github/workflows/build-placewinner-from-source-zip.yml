@@ -1,0 +1,100 @@
+name: Build PlaceWinner and show APK SHA-1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate and extract source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="PlaceWinner-Firebase-Login-FIX.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "::error::File $ZIP_FILE tidak ditemukan di root repository."
+            exit 1
+          fi
+          SRC="$RUNNER_TEMP/placewinner-source"
+          mkdir -p "$SRC"
+          unzip -q "$ZIP_FILE" -d "$SRC"
+          if [ ! -f "$SRC/settings.gradle" ] && [ ! -f "$SRC/settings.gradle.kts" ]; then
+            echo "::error::settings.gradle tidak ditemukan di root ZIP."
+            find "$SRC" -maxdepth 3 -type f | head -80
+            exit 1
+          fi
+          if [ ! -f "$SRC/app/build.gradle" ] && [ ! -f "$SRC/app/build.gradle.kts" ]; then
+            echo "::error::app/build.gradle tidak ditemukan di root ZIP."
+            exit 1
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK without legacy tools package
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager tidak ditemukan di runner GitHub."
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager 2>/dev/null || true
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        shell: bash
+        working-directory: ${{ runner.temp }}/placewinner-source
+        run: gradle assembleDebug --stacktrace
+
+      - name: Print certificate fingerprint of the exact APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/placewinner-source/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner tidak ditemukan."
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/placewinner-apk-certificate.txt"
+          {
+            echo "## Fingerprint APK"
+            echo '```text'
+            cat "$RUNNER_TEMP/placewinner-apk-certificate.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK and certificate report
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlaceWinner-Firebase-Login-FIX-APK
+          path: |
+            ${{ runner.temp }}/placewinner-source/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/placewinner-apk-certificate.txt
+          if-no-files-found: error
